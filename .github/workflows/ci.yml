@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check reliability.py idempotency.py bulkhead.py backpressure.py dead_letter_queue.py resilience tests
+      - run: pytest -q
+      - run: resilience-lab suite --requests 8 --messages 8 --output /tmp/report.json
