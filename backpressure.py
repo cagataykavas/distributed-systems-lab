@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Generic, TypeVar
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -26,7 +27,7 @@ class BackpressureQueue(Generic[T]):
             await asyncio.wait_for(self.queue.put(item), timeout=timeout)
             self.stats.accepted += 1
             return True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.stats.rejected += 1
             return False
 
@@ -48,7 +49,9 @@ async def demo() -> None:
         print("processed", value)
 
     worker = asyncio.create_task(pressure.worker(slow_handler))
-    results = await asyncio.gather(*(pressure.submit(i, timeout=0.01) for i in range(20)))
+    results = await asyncio.gather(
+        *(pressure.submit(index, timeout=0.01) for index in range(20))
+    )
     await pressure.queue.join()
     worker.cancel()
     print({"accepted": sum(results), "stats": pressure.stats})
