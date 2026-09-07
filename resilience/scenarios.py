@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 import random
 import time
-from typing import Callable
+from dataclasses import asdict, dataclass, field
 
 from dead_letter_queue import Message, RetryQueue
 from reliability import CircuitBreaker
@@ -74,7 +73,11 @@ def circuit_breaker_scenario(
     seed: int = 42,
 ) -> ScenarioReport:
     dependency = FaultyDependency(failure_probability=failure_probability, seed=seed)
-    breaker = CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=3600)
+    breaker = CircuitBreaker(
+        failure_threshold=failure_threshold,
+        recovery_timeout=3600,
+        retry_on=(RuntimeError,),
+    )
     report = ScenarioReport("circuit_breaker", requests=requests)
 
     for step in range(1, requests + 1):
@@ -108,12 +111,24 @@ def retry_dlq_scenario(
     max_attempts: int = 3,
     poison_every: int = 4,
 ) -> ScenarioReport:
-    queue: RetryQueue[dict] = RetryQueue(max_attempts=max_attempts)
+    queue: RetryQueue[dict] = RetryQueue(
+        max_attempts=max_attempts,
+        retry_on=(RuntimeError,),
+    )
     report = ScenarioReport("retry_dlq", requests=messages)
-    poison_ids = {f"evt-{index}" for index in range(1, messages + 1) if index % poison_every == 0}
+    poison_ids = {
+        f"evt-{index}"
+        for index in range(1, messages + 1)
+        if index % poison_every == 0
+    }
 
     for index in range(1, messages + 1):
-        queue.publish(Message(f"evt-{index}", {"message_id": f"evt-{index}", "value": index}))
+        queue.publish(
+            Message(
+                f"evt-{index}",
+                {"message_id": f"evt-{index}", "value": index},
+            )
+        )
 
     def handler(payload: dict) -> None:
         if payload["message_id"] in poison_ids:
