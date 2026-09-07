@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Generic, TypeVar
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -15,8 +16,15 @@ class Message(Generic[T]):
 
 
 class RetryQueue(Generic[T]):
-    def __init__(self, max_attempts: int = 3):
+    def __init__(
+        self,
+        max_attempts: int = 3,
+        retry_on: tuple[type[Exception], ...] = (Exception,),
+    ) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least one")
         self.max_attempts = max_attempts
+        self.retry_on = retry_on
         self.ready: list[Message[T]] = []
         self.dead_letter: list[Message[T]] = []
 
@@ -30,7 +38,7 @@ class RetryQueue(Generic[T]):
         try:
             handler(message.payload)
             return "processed"
-        except Exception as exc:
+        except self.retry_on as exc:
             message.attempts += 1
             message.errors.append(str(exc))
             if message.attempts >= self.max_attempts:
