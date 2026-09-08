@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from resilience.primitives.circuit_breaker import CircuitBreaker
+from resilience.primitives.circuit_breaker import CircuitBreaker, CircuitOpenError
 from resilience.primitives.idempotency import IdempotencyStore, fingerprint_json
 from resilience.primitives.retry import RetryPolicy
 
@@ -27,7 +27,8 @@ class ResilientExecutor(Generic[R]):
     Ordering matters: idempotency is checked before any downstream attempt so a
     completed request can be replayed without consuming breaker capacity or retry
     budget. A new request is then executed through the breaker, with retries bounded
-    by a deterministic policy.
+    by a deterministic policy. An open circuit fails fast rather than burning retry
+    attempts against a dependency that is intentionally isolated.
     """
 
     def __init__(
@@ -42,10 +43,10 @@ class ResilientExecutor(Generic[R]):
     ) -> None:
         self.breaker = breaker
         self.retry_policy = retry_policy
-        self.store = store or IdempotencyStore()
+        self.store = store if store is not None else IdempotencyStore()
         self.retry_on = retry_on
         self._sleeper = sleeper
-        self._rng = rng or random.Random()
+        self._rng = rng if rng is not None else random.Random()
 
     def _execute_with_resilience(self, operation: Callable[[], R]) -> tuple[R, int]:
         last_error: Exception | None = None
@@ -55,6 +56,8 @@ class ResilientExecutor(Generic[R]):
             attempts += 1
             try:
                 return self.breaker.call(operation), attempts
+            except CircuitOpenError:
+                raise
             except self.retry_on as exc:
                 last_error = exc
                 if attempt_index == self.retry_policy.attempts - 1:
