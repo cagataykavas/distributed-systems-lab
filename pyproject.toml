@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "distributed-systems-resilience"
-version = "0.2.0"
-description = "Executable reliability scenarios for retries, circuit breakers, DLQs and backpressure"
+version = "0.3.0"
+description = "Executable resilience simulations for retries, circuit breakers, idempotency, DLQs, bulkheads and backpressure"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -17,7 +18,12 @@ resilience-lab = "resilience.cli:main"
 
 [tool.setuptools]
 py-modules = ["reliability", "idempotency", "bulkhead", "backpressure", "dead_letter_queue"]
-packages = ["resilience"]
+
+[tool.setuptools.packages.find]
+include = ["resilience*"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
