@@ -61,8 +61,9 @@ class RetryQueue(Generic[T]):
             handler(message.payload)
         except self.retry_on as exc:
             message.attempts += 1
-            message.errors.append(str(exc))
-            message.error_types.append(type(exc).__name__)
+            error_type = type(exc).__name__
+            message.errors.append(f"{error_type}: {exc}")
+            message.error_types.append(error_type)
             if message.attempts >= self.max_attempts:
                 self.dead_letter.append(message)
                 return QueueOutcome.DEAD_LETTERED.value
