@@ -46,17 +46,20 @@ class AsyncWorkerPool(Generic[T]):
             return
         self._started = True
         self._tasks = [
-            asyncio.create_task(self.queue.worker(self._handle), name=f"resilience-worker-{index}")
+            asyncio.create_task(
+                self.queue.worker(self._handle),
+                name=f"resilience-worker-{index}",
+            )
             for index in range(self._worker_count)
         ]
 
     async def _handle(self, item: T) -> None:
         await self.bulkhead.run(lambda: self._handler(item))
 
-    async def submit(self, item: T, *, timeout: float = 0.05) -> bool:
+    async def submit(self, item: T, *, wait_seconds: float = 0.05) -> bool:
         if not self._started:
             raise RuntimeError("worker pool must be started before submit")
-        return await self.queue.submit(item, timeout=timeout)
+        return await self.queue.submit(item, wait_seconds=wait_seconds)
 
     async def drain(self) -> None:
         if not self._started:
