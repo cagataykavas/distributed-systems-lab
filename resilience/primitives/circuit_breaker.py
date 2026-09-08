@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ class CircuitSnapshot:
     state: CircuitState
     failures: int
     opened_at: float | None
+    probe_in_flight: bool
 
 
 class CircuitBreaker:
@@ -49,35 +51,48 @@ class CircuitBreaker:
         self.failures = 0
         self.opened_at: float | None = None
         self.state = CircuitState.CLOSED
+        self._probe_in_flight = False
+        self._state_lock = threading.Lock()
 
     def snapshot(self) -> CircuitSnapshot:
-        return CircuitSnapshot(
-            state=self.state,
-            failures=self.failures,
-            opened_at=self.opened_at,
-        )
+        with self._state_lock:
+            return CircuitSnapshot(
+                state=self.state,
+                failures=self.failures,
+                opened_at=self.opened_at,
+                probe_in_flight=self._probe_in_flight,
+            )
 
     def _before_call(self) -> None:
-        if self.state is not CircuitState.OPEN:
-            return
-        assert self.opened_at is not None
-        if self._clock() - self.opened_at < self.recovery_timeout:
-            raise CircuitOpenError()
-        self.state = CircuitState.HALF_OPEN
+        with self._state_lock:
+            if self.state is CircuitState.OPEN:
+                assert self.opened_at is not None
+                if self._clock() - self.opened_at < self.recovery_timeout:
+                    raise CircuitOpenError()
+                self.state = CircuitState.HALF_OPEN
+
+            if self.state is CircuitState.HALF_OPEN:
+                if self._probe_in_flight:
+                    raise CircuitOpenError()
+                self._probe_in_flight = True
 
     def _record_success(self) -> None:
-        self.failures = 0
-        self.opened_at = None
-        self.state = CircuitState.CLOSED
+        with self._state_lock:
+            self.failures = 0
+            self.opened_at = None
+            self.state = CircuitState.CLOSED
+            self._probe_in_flight = False
 
     def _record_failure(self) -> None:
-        if self.state is CircuitState.HALF_OPEN:
-            self.failures = self.failure_threshold
-        else:
-            self.failures += 1
-        if self.failures >= self.failure_threshold:
-            self.state = CircuitState.OPEN
-            self.opened_at = self._clock()
+        with self._state_lock:
+            if self.state is CircuitState.HALF_OPEN:
+                self.failures = self.failure_threshold
+            else:
+                self.failures += 1
+            if self.failures >= self.failure_threshold:
+                self.state = CircuitState.OPEN
+                self.opened_at = self._clock()
+            self._probe_in_flight = False
 
     def call(self, operation: Callable[[], T]) -> T:
         self._before_call()
@@ -85,6 +100,11 @@ class CircuitBreaker:
             result = operation()
         except self.retry_on:
             self._record_failure()
+            raise
+        except Exception:
+            # An untracked exception is a caller/domain failure, not evidence that
+            # the dependency is unavailable. It must also release a half-open probe.
+            self._record_success()
             raise
         self._record_success()
         return result

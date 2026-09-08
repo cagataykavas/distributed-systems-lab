@@ -118,6 +118,59 @@ def test_half_open_failure_reopens_circuit() -> None:
         breaker.call(lambda: (_ for _ in ()).throw(RuntimeError("first")))
     assert breaker.state is CircuitState.OPEN
 
+
+def test_half_open_allows_exactly_one_concurrent_probe() -> None:
+    clock = ManualClock()
+    breaker = CircuitBreaker(
+        failure_threshold=1,
+        recovery_timeout=5,
+        retry_on=(TimeoutError,),
+        clock=clock,
+    )
+    with pytest.raises(TimeoutError):
+        breaker.call(lambda: (_ for _ in ()).throw(TimeoutError("down")))
+    clock.advance(5)
+
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+
+    def slow_probe() -> str:
+        probe_started.set()
+        assert release_probe.wait(timeout=1)
+        return "healthy"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(breaker.call, slow_probe)
+        assert probe_started.wait(timeout=1)
+        second = pool.submit(breaker.call, lambda: "must-not-run")
+        with pytest.raises(CircuitOpenError):
+            second.result(timeout=1)
+        assert breaker.snapshot().probe_in_flight is True
+        release_probe.set()
+        assert first.result(timeout=1) == "healthy"
+
+    snapshot = breaker.snapshot()
+    assert snapshot.state is CircuitState.CLOSED
+    assert snapshot.probe_in_flight is False
+
+
+def test_untracked_half_open_exception_does_not_wedge_breaker() -> None:
+    clock = ManualClock()
+    breaker = CircuitBreaker(
+        failure_threshold=1,
+        recovery_timeout=0,
+        retry_on=(TimeoutError,),
+        clock=clock,
+    )
+    with pytest.raises(TimeoutError):
+        breaker.call(lambda: (_ for _ in ()).throw(TimeoutError("down")))
+
+    with pytest.raises(ValueError):
+        breaker.call(lambda: (_ for _ in ()).throw(ValueError("bad request")))
+
+    assert breaker.snapshot().state is CircuitState.CLOSED
+    assert breaker.call(lambda: "healthy") == "healthy"
+
     clock.advance(1)
     with pytest.raises(RuntimeError, match="probe"):
         breaker.call(lambda: (_ for _ in ()).throw(RuntimeError("probe")))
