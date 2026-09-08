@@ -2,20 +2,38 @@ name: ci
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:
   quality:
     runs-on: ubuntu-latest
-    env:
-      PYTHONPATH: .
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: ruff check reliability.py idempotency.py bulkhead.py backpressure.py dead_letter_queue.py resilience tests
-      - run: pytest -q
-      - run: resilience-lab suite --requests 8 --messages 8 --output /tmp/report.json
+
+      - name: Install project
+        run: pip install -e ".[dev]"
+
+      - name: Dependency sanity check
+        run: pip check
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit and scenario tests
+        run: pytest -q
+
+      - name: Exercise CLI suite
+        run: resilience-lab suite --requests 8 --messages 8 --items 8 --output /tmp/report.json
+
+      - name: Build wheel
+        run: python -m pip wheel . --no-deps --wheel-dir /tmp/dist
+
+      - name: Verify wheel in isolated environment
+        run: |
+          python -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/pip install /tmp/dist/*.whl
+          /tmp/wheelcheck/bin/python -c "from resilience.executor import ResilientExecutor; from resilience.primitives import CircuitBreaker, RetryPolicy; print('wheel imports ok')"
+          /tmp/wheelcheck/bin/resilience-lab executor --output /tmp/executor-report.json
