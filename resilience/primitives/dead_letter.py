@@ -22,6 +22,7 @@ class Message(Generic[T]):
     payload: T
     attempts: int = 0
     errors: list[str] = field(default_factory=list)
+    error_types: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.message_id:
@@ -60,7 +61,8 @@ class RetryQueue(Generic[T]):
             handler(message.payload)
         except self.retry_on as exc:
             message.attempts += 1
-            message.errors.append(f"{type(exc).__name__}: {exc}")
+            message.errors.append(str(exc))
+            message.error_types.append(type(exc).__name__)
             if message.attempts >= self.max_attempts:
                 self.dead_letter.append(message)
                 return QueueOutcome.DEAD_LETTERED.value
