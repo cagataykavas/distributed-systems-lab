@@ -195,8 +195,8 @@ def test_retry_queue_moves_poison_message_to_dlq_with_evidence() -> None:
 def test_backpressure_rejects_when_queue_stays_full() -> None:
     async def scenario() -> None:
         queue = BackpressureQueue[int](maxsize=1)
-        assert await queue.submit(1, timeout=0)
-        assert not await queue.submit(2, timeout=0)
+        assert await queue.submit(1, wait_seconds=0)
+        assert not await queue.submit(2, wait_seconds=0)
         assert queue.stats.accepted == 1
         assert queue.stats.rejected == 1
         assert queue.depth == 1
