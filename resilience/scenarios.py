@@ -300,7 +300,7 @@ async def async_worker_pool_scenario(
         workers=max_concurrency,
     ) as pool:
         accepted = await asyncio.gather(
-            *(pool.submit(index, timeout=0) for index in range(items))
+            *(pool.submit(index, wait_seconds=0) for index in range(items))
         )
         await pool.drain()
         snapshot = pool.snapshot()
