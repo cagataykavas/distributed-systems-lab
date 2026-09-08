@@ -29,14 +29,16 @@ class BackpressureQueue(Generic[T]):
     def depth(self) -> int:
         return self.queue.qsize()
 
-    async def submit(self, item: T, timeout: float = 0.05) -> bool:
-        if timeout < 0:
-            raise ValueError("timeout must be non-negative")
+    async def submit(self, item: T, wait_seconds: float = 0.05) -> bool:
+        """Enqueue within a bounded wait; return False when admission is rejected."""
+        if wait_seconds < 0:
+            raise ValueError("wait_seconds must be non-negative")
         try:
-            if timeout == 0:
+            if wait_seconds == 0:
                 self.queue.put_nowait(item)
             else:
-                await asyncio.wait_for(self.queue.put(item), timeout=timeout)
+                async with asyncio.timeout(wait_seconds):
+                    await self.queue.put(item)
         except (asyncio.QueueFull, TimeoutError):
             self.stats.rejected += 1
             return False
