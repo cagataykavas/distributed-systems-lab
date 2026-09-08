@@ -118,6 +118,11 @@ def test_half_open_failure_reopens_circuit() -> None:
         breaker.call(lambda: (_ for _ in ()).throw(RuntimeError("first")))
     assert breaker.state is CircuitState.OPEN
 
+    clock.advance(1)
+    with pytest.raises(RuntimeError, match="probe"):
+        breaker.call(lambda: (_ for _ in ()).throw(RuntimeError("probe")))
+    assert breaker.state is CircuitState.OPEN
+
 
 def test_half_open_allows_exactly_one_concurrent_probe() -> None:
     clock = ManualClock()
@@ -170,11 +175,6 @@ def test_untracked_half_open_exception_does_not_wedge_breaker() -> None:
 
     assert breaker.snapshot().state is CircuitState.CLOSED
     assert breaker.call(lambda: "healthy") == "healthy"
-
-    clock.advance(1)
-    with pytest.raises(RuntimeError, match="probe"):
-        breaker.call(lambda: (_ for _ in ()).throw(RuntimeError("probe")))
-    assert breaker.state is CircuitState.OPEN
 
 
 def test_idempotency_store_replays_and_rejects_payload_mutation() -> None:
