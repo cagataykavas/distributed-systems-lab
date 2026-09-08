@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from resilience.executor import ResilientExecutor
-from resilience.primitives.circuit_breaker import CircuitBreaker
-from resilience.primitives.idempotency import IdempotencyConflict
+from resilience.primitives.circuit_breaker import CircuitBreaker, CircuitOpenError
+from resilience.primitives.idempotency import IdempotencyConflict, IdempotencyStore
 from resilience.primitives.retry import RetryPolicy
 from resilience.worker_pool import AsyncWorkerPool
 
@@ -18,6 +18,7 @@ def test_resilient_executor_retries_then_replays_without_downstream_call() -> No
         retry_on=(TimeoutError,),
     )
     delays: list[float] = []
+    store: IdempotencyStore[int] = IdempotencyStore()
     executor: ResilientExecutor[int] = ResilientExecutor(
         breaker=breaker,
         retry_policy=RetryPolicy(
@@ -25,6 +26,7 @@ def test_resilient_executor_retries_then_replays_without_downstream_call() -> No
             base_delay=0.01,
             jitter_ratio=0,
         ),
+        store=store,
         retry_on=(TimeoutError,),
         sleeper=delays.append,
     )
@@ -47,6 +49,7 @@ def test_resilient_executor_retries_then_replays_without_downstream_call() -> No
     assert first.attempts == 3
     assert delays == [0.01, 0.02]
     assert calls == 3
+    assert executor.store is store
 
     replay = executor.execute(
         key="request-1",
@@ -69,6 +72,28 @@ def test_resilient_executor_rejects_changed_payload_for_same_key() -> None:
 
     with pytest.raises(IdempotencyConflict):
         executor.execute(key="key-1", payload={"x": 2}, operation=lambda: 20)
+
+
+def test_resilient_executor_does_not_retry_open_circuit() -> None:
+    breaker = CircuitBreaker(
+        failure_threshold=1,
+        recovery_timeout=60,
+        retry_on=(TimeoutError,),
+    )
+    with pytest.raises(TimeoutError):
+        breaker.call(lambda: (_ for _ in ()).throw(TimeoutError("down")))
+
+    delays: list[float] = []
+    executor: ResilientExecutor[int] = ResilientExecutor(
+        breaker=breaker,
+        retry_policy=RetryPolicy(attempts=5, base_delay=1, jitter_ratio=0),
+        retry_on=(Exception,),
+        sleeper=delays.append,
+    )
+
+    with pytest.raises(CircuitOpenError):
+        executor.execute(key="open", payload={"x": 1}, operation=lambda: 1)
+    assert delays == []
 
 
 def test_worker_pool_requires_explicit_start() -> None:
@@ -107,7 +132,7 @@ def test_worker_pool_drains_and_bounds_concurrency() -> None:
             workers=6,
         ) as pool:
             accepted = await asyncio.gather(
-                *(pool.submit(value, timeout=0.05) for value in range(12))
+                *(pool.submit(value, wait_seconds=0.05) for value in range(12))
             )
             assert all(accepted)
             await pool.drain()
