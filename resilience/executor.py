@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from resilience.deadline import RequestDeadline
 from resilience.primitives.circuit_breaker import CircuitBreaker, CircuitOpenError
 from resilience.primitives.idempotency import IdempotencyStore, fingerprint_json
 from resilience.primitives.retry import RetryPolicy
@@ -48,11 +49,17 @@ class ResilientExecutor(Generic[R]):
         self._sleeper = sleeper
         self._rng = rng if rng is not None else random.Random()
 
-    def _execute_with_resilience(self, operation: Callable[[], R]) -> tuple[R, int]:
+    def _execute_with_resilience(
+        self,
+        operation: Callable[[], R],
+        deadline: RequestDeadline | None,
+    ) -> tuple[R, int]:
         last_error: Exception | None = None
         attempts = 0
 
         for attempt_index in range(self.retry_policy.attempts):
+            if deadline is not None:
+                deadline.require_attempt(attempts=attempts)
             attempts += 1
             try:
                 return self.breaker.call(operation), attempts
@@ -63,6 +70,8 @@ class ResilientExecutor(Generic[R]):
                 if attempt_index == self.retry_policy.attempts - 1:
                     break
                 delay = self.retry_policy.delay_for(attempt_index + 1, self._rng)
+                if deadline is not None:
+                    deadline.require_retry_delay(delay, attempts=attempts)
                 self._sleeper(delay)
 
         if last_error is None:
@@ -75,13 +84,14 @@ class ResilientExecutor(Generic[R]):
         key: str,
         payload: T,
         operation: Callable[[], R],
+        deadline: RequestDeadline | None = None,
     ) -> ExecutionResult[R]:
         fingerprint = fingerprint_json(payload)
         attempts = 0
 
         def guarded() -> R:
             nonlocal attempts
-            value, attempts = self._execute_with_resilience(operation)
+            value, attempts = self._execute_with_resilience(operation, deadline)
             return value
 
         value, executed = self.store.execute_once(key, fingerprint, guarded)

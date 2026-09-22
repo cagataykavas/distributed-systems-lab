@@ -16,6 +16,7 @@ flowchart LR
 
     EX --> ID[Idempotency Store]
     EX --> RT[Retry Policy]
+    EX --> DL[Request Deadline]
     EX --> CB[Circuit Breaker]
     CB --> DS[Faulty Downstream]
 
@@ -32,6 +33,7 @@ flowchart LR
 ```text
 resilience/
 ├── executor.py              # idempotency + retry + circuit-breaker composition
+├── deadline.py              # monotonic cross-retry request budget
 ├── worker_pool.py           # bounded ingress + bulkhead + worker lifecycle
 ├── reporting.py             # scenario events, counters and p95 latency
 ├── scenarios.py             # deterministic failure simulations
@@ -103,6 +105,33 @@ downstream operation
 
 A completed replay returns before consuming breaker capacity or retry budget. An open circuit fails fast rather than retrying an intentionally isolated dependency.
 
+### Request deadline propagation
+
+`RequestDeadline` carries one monotonic time budget across the whole executor call.
+The executor checks it before every downstream attempt and before every retry sleep.
+If the remaining budget cannot contain the scheduled backoff, execution stops with a
+`DeadlineExceeded` error containing JSON-ready phase, attempt, elapsed, remaining and
+required-delay evidence. Completed idempotent replays still return without consuming
+downstream or retry capacity.
+
+```python
+from resilience import RequestDeadline
+
+deadline = RequestDeadline.after(0.250)
+result = executor.execute(
+    key="payment-42",
+    payload={"amount": 42},
+    operation=call_downstream,
+    deadline=deadline,
+)
+```
+
+This is a retry/admission deadline, not asynchronous cancellation. It cannot preempt a
+synchronous operation already in flight. Production callers must also propagate the
+remaining budget into socket, HTTP and database timeouts. A successful side effect is
+returned even if it completes after the deadline; rejecting it would invite an unsafe
+retry unless the complete side-effect and idempotency record are committed atomically.
+
 ### Async worker path
 
 `AsyncWorkerPool` composes:
@@ -154,6 +183,8 @@ The test suite covers more than import or smoke checks. It validates:
 - bounded queue rejection under pressure;
 - bulkhead peak concurrency;
 - composed retry + breaker + idempotency execution;
+- deadline exhaustion before work, before retry sleep and after sleep overshoot;
+- expired-deadline idempotent replay without downstream execution;
 - async worker-pool lifecycle and drain behavior;
 - CLI-generated structured reports.
 
@@ -177,6 +208,7 @@ What would change in production:
 | in-process circuit breaker | application library, sidecar, gateway, or service mesh policy |
 | asyncio bounded queue | broker limits, admission control, bounded executors |
 | semaphore bulkhead | bounded connection pools, worker pools, concurrency limiters |
+| monotonic request deadline | propagated gRPC/HTTP deadline plus client timeouts |
 | local metrics snapshot | Prometheus/OpenTelemetry metrics and traces |
 
 Important distributed-system caveat: the local idempotency lock proves thread-level behavior only. Cross-process or cross-node correctness requires a shared transactional or conditional-write primitive.
