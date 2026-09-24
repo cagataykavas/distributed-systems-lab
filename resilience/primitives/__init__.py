@@ -13,6 +13,13 @@ from resilience.primitives.idempotency import (
     fingerprint_json,
 )
 from resilience.primitives.retry import RetryPolicy, retry
+from resilience.primitives.retry_budget import (
+    RetryBudget,
+    RetryBudgetDecision,
+    RetryBudgetPolicy,
+    RetryBudgetReason,
+    RetryBudgetSnapshot,
+)
 
 __all__ = [
     "BackpressureQueue",
@@ -27,6 +34,11 @@ __all__ = [
     "Message",
     "QueueStats",
     "RetryPolicy",
+    "RetryBudget",
+    "RetryBudgetDecision",
+    "RetryBudgetPolicy",
+    "RetryBudgetReason",
+    "RetryBudgetSnapshot",
     "RetryQueue",
     "fingerprint_json",
     "retry",
