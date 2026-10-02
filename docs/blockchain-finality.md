@@ -37,11 +37,20 @@ that proof-of-work chains provide absolute finality.
 
 ## Deliberate boundaries
 
-The lab uses an in-memory UTXO set and caller-supplied work. It does not implement peer discovery,
-proof-of-work verification, signatures, scripts, difficulty adjustment, persistence, orphan-block
-staging, network-specific consensus, or Byzantine-fault tolerance. SHA-256 here provides evidence
-integrity; it does not authenticate a sender.
+`JournaledChain` adds an optional crash-recovery boundary around the in-memory reconciler. Every
+accepted block is validated on a replay candidate, encoded as canonical JSON, linked to the prior
+event with SHA-256, appended with restrictive file permissions, and `fsync`ed before its effects are
+exposed in memory. Restart reconstructs every branch and canonical-tip decision by replaying the
+journal through the same validation path. A single non-newline-terminated tail is treated as an
+uncommitted torn write; malformed, reordered, deleted, duplicated-field, or digest-mismatched
+committed records fail closed.
 
-The next production-minded increment is an append-only journal with crash recovery: persist block
-admission and canonical-tip changes atomically, replay them after interruption, and prove that a
-reorg cannot leave a partially applied UTXO state.
+The journal protects against accidental partial writes and offline record mutation when its head
+digest is retained separately. It is not a replicated log or database transaction, and it does not
+authenticate the writer. Concurrent processes require an external single-writer lease or a storage
+adapter with compare-and-set fencing. A hostile writer with access to the full file can rewrite the
+entire chain unless the head is anchored in separately trusted storage.
+
+The lab still uses caller-supplied work and does not implement peer discovery, proof-of-work
+verification, signatures, scripts, difficulty adjustment, orphan-block staging, network-specific
+consensus, or Byzantine-fault tolerance.
