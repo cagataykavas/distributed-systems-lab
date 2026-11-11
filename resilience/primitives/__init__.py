@@ -1,5 +1,5 @@
 from resilience.primitives.backpressure import BackpressureQueue, QueueStats
-from resilience.primitives.bulkhead import Bulkhead, BulkheadStats
+from resilience.primitives.bulkhead import Bulkhead, BulkheadRejected, BulkheadStats
 from resilience.primitives.circuit_breaker import (
     CircuitBreaker,
     CircuitOpenError,
@@ -17,6 +17,7 @@ from resilience.primitives.retry import RetryPolicy, retry
 __all__ = [
     "BackpressureQueue",
     "Bulkhead",
+    "BulkheadRejected",
     "BulkheadStats",
     "CircuitBreaker",
     "CircuitOpenError",

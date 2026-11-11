@@ -85,7 +85,27 @@ This mirrors the invariant expected from a production shared datastore even thou
 
 ### Bulkhead isolation
 
-`Bulkhead` limits the number of concurrent calls entering a fragile downstream section and exposes active, peak, completed, and failed counters.
+`Bulkhead` limits the number of concurrent calls entering a fragile downstream
+section. An optional waiter cap prevents a saturated network dependency from
+turning the semaphore into an unbounded hidden queue, while per-call wait
+budgets surface fail-fast and timed-out admission through stable
+`queue_full`/`wait_timeout` reasons. Active, waiting, peak, completion, failure,
+rejection and timeout counters make the boundary observable. Existing callers
+that omit both limits keep the original waiting behavior.
+
+```python
+from resilience.primitives import Bulkhead, BulkheadRejected
+
+dependency = Bulkhead(max_concurrency=20, max_waiters=40)
+
+try:
+    response = await dependency.run(call_downstream, wait_seconds=0.05)
+except BulkheadRejected as exc:
+    record_admission_failure(reason=exc.reason)
+```
+
+The wait budget covers admission only; downstream connection, request, and
+response deadlines still belong in the network client.
 
 ### Composed execution path
 
@@ -153,6 +173,7 @@ The test suite covers more than import or smoke checks. It validates:
 - retry-to-DLQ transitions with preserved failure evidence;
 - bounded queue rejection under pressure;
 - bulkhead peak concurrency;
+- bounded bulkhead waiters, admission timeouts, and cancellation cleanup;
 - composed retry + breaker + idempotency execution;
 - async worker-pool lifecycle and drain behavior;
 - CLI-generated structured reports.
