@@ -2,7 +2,7 @@
 
 A small, executable reliability platform for studying how distributed-system failure patterns interact under load and partial failure.
 
-This repository started as a collection of isolated interview snippets. It now has a package boundary, composable resilience primitives, deterministic failure scenarios, a CLI, concurrency tests, structured reports, and backward-compatible facades for the original modules.
+This repository started as a collection of isolated interview snippets. It now has a package boundary, composable resilience primitives, deterministic network-fault and dependency-failure scenarios, a CLI, concurrency tests, structured reports, and backward-compatible facades for the original modules.
 
 The goal is **not** to pretend that an in-memory Python lab replaces Redis, Kafka, Envoy, Resilience4j, service meshes, or production coordination systems. The goal is to make the semantics of retries, circuit breakers, idempotency, DLQs, backpressure, and bulkheads easy to execute, inspect, test, and discuss.
 
@@ -36,6 +36,7 @@ resilience/
 ├── reporting.py             # scenario events, counters and p95 latency
 ├── scenarios.py             # deterministic failure simulations
 ├── cli.py                   # resilience-lab command line interface
+├── network_faults.py        # monotonic timeout, reset and latency windows
 └── primitives/
     ├── retry.py
     ├── circuit_breaker.py
@@ -66,6 +67,19 @@ Key idea: retries are useful for transient failures, but they also amplify load.
 - a failed probe reopens it.
 
 The clock is injectable, so recovery behavior is deterministic in tests.
+
+### Correlated network-fault replay
+
+`NetworkFaultInjector` applies ordered, non-overlapping timeout, connection-reset,
+and latency windows against an injectable monotonic clock. Schedules are bounded
+and use half-open intervals, so the exact boundary behavior is reproducible rather
+than dependent on wall-clock sleeps. The injector reports separate pass, delay,
+timeout, and reset counts.
+
+The `network-partition` scenario feeds a sustained timeout window through the
+circuit breaker, demonstrating that a partition is a correlated failure rather
+than a sequence of independent random errors. It records breaker rejection during
+the outage and the first successful half-open recovery probe after the window.
 
 ### Idempotency with payload conflict detection
 
@@ -121,6 +135,7 @@ The CLI exposes deterministic scenarios that produce structured JSON reports.
 pip install -e ".[dev]"
 
 resilience-lab circuit-breaker --requests 20
+resilience-lab network-partition --partition-start-ms 300 --partition-duration-ms 400
 resilience-lab retry-dlq --messages 12 --max-attempts 3
 resilience-lab executor
 resilience-lab worker-pool --items 20 --queue-size 3 --max-concurrency 2
@@ -146,6 +161,8 @@ The test suite covers more than import or smoke checks. It validates:
 
 - configured exception filtering for retries;
 - deterministic backoff schedules;
+- half-open network-fault boundaries, schedule validation and fault accounting;
+- deterministic circuit-breaker recovery after a correlated partition;
 - circuit open / half-open / recovery transitions;
 - half-open failure reopening the circuit;
 - idempotent replay and payload conflicts;
