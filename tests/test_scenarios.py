@@ -6,10 +6,40 @@ from pathlib import Path
 from resilience.cli import main
 from resilience.scenarios import (
     circuit_breaker_scenario,
+    network_partition_scenario,
     resilient_executor_scenario,
     retry_dlq_scenario,
     worker_pool_scenario,
 )
+
+
+def test_network_partition_scenario_recovers_deterministically() -> None:
+    first = network_partition_scenario()
+    repeated = network_partition_scenario()
+
+    assert first.as_dict() == repeated.as_dict()
+    assert first.successes == 8
+    assert first.failures == 2
+    assert first.rejected == 2
+    assert [event.outcome for event in first.events[3:8]] == [
+        "timeout",
+        "timeout",
+        "rejected",
+        "rejected",
+        "success",
+    ]
+
+
+def test_network_partition_cli_writes_report(tmp_path: Path) -> None:
+    output = tmp_path / "partition.json"
+
+    result = main(["network-partition", "--requests", "8", "--output", str(output)])
+
+    assert result == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["name"] == "network_partition"
+    assert payload["requests"] == 8
+    assert payload["successes"] + payload["failures"] + payload["rejected"] == 8
 
 
 def test_circuit_breaker_scenario_records_open_rejections() -> None:
@@ -78,9 +108,10 @@ def test_cli_suite_writes_structured_report(tmp_path: Path) -> None:
 
     assert result == 0
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["summary"]["total_requests"] == 5 + 4 + 3 + 6
+    assert payload["summary"]["total_requests"] == 5 + 12 + 4 + 3 + 6
     assert {scenario["name"] for scenario in payload["scenarios"]} == {
         "circuit_breaker",
+        "network_partition",
         "retry_dlq",
         "resilient_executor",
         "async_worker_pool",

@@ -35,5 +35,5 @@ jobs:
         run: |
           python -m venv /tmp/wheelcheck
           /tmp/wheelcheck/bin/pip install /tmp/dist/*.whl
-          /tmp/wheelcheck/bin/python -c "from resilience.executor import ResilientExecutor; from resilience.primitives import CircuitBreaker, RetryPolicy; print('wheel imports ok')"
-          /tmp/wheelcheck/bin/resilience-lab executor --output /tmp/executor-report.json
+          /tmp/wheelcheck/bin/python -c "from resilience import NetworkFaultInjector; from resilience.executor import ResilientExecutor; from resilience.primitives import CircuitBreaker, RetryPolicy; print('wheel imports ok')"
+          /tmp/wheelcheck/bin/resilience-lab network-partition --output /tmp/network-partition-report.json

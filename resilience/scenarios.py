@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 
 from resilience.executor import ResilientExecutor
+from resilience.network_faults import FaultWindow, NetworkFaultInjector, NetworkFaultKind
 from resilience.primitives.circuit_breaker import (
     CircuitBreaker,
     CircuitOpenError,
@@ -120,6 +121,85 @@ def circuit_breaker_scenario(
             )
         )
 
+    return report
+
+
+def network_partition_scenario(
+    *,
+    requests: int = 12,
+    request_interval_ms: int = 100,
+    partition_start_ms: int = 300,
+    partition_duration_ms: int = 400,
+    failure_threshold: int = 2,
+    recovery_timeout_ms: int = 250,
+) -> ScenarioReport:
+    """Replay a correlated timeout window through a circuit breaker."""
+
+    integer_values = (
+        requests,
+        request_interval_ms,
+        partition_start_ms,
+        partition_duration_ms,
+        failure_threshold,
+        recovery_timeout_ms,
+    )
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_values):
+        raise TypeError("network partition scenario values must be integers")
+    if requests < 1 or request_interval_ms < 1 or partition_duration_ms < 1:
+        raise ValueError("request and partition values must be positive")
+    if partition_start_ms < 0 or failure_threshold < 1 or recovery_timeout_ms < 0:
+        raise ValueError("partition and breaker values are invalid")
+
+    clock = ManualClock()
+    injector = NetworkFaultInjector(
+        (
+            FaultWindow(
+                start_ms=partition_start_ms,
+                end_ms=partition_start_ms + partition_duration_ms,
+                kind=NetworkFaultKind.TIMEOUT,
+            ),
+        ),
+        clock=clock,
+        sleeper=lambda _: None,
+    )
+    breaker = CircuitBreaker(
+        failure_threshold=failure_threshold,
+        recovery_timeout=recovery_timeout_ms / 1000,
+        retry_on=(TimeoutError, ConnectionResetError),
+        clock=clock,
+    )
+    report = ScenarioReport("network_partition", requests=requests)
+
+    for step in range(1, requests + 1):
+        state_before = breaker.state
+        try:
+            breaker.call(lambda step=step: injector.call(lambda: step * 2))
+        except CircuitOpenError:
+            report.rejected += 1
+            outcome = "rejected"
+            detail = f"breaker={state_before.value} fault=not_attempted"
+        except TimeoutError:
+            report.failures += 1
+            outcome = "timeout"
+            detail = f"breaker={state_before.value}->{breaker.state.value} fault=timeout"
+        else:
+            report.successes += 1
+            outcome = "success"
+            detail = f"breaker={state_before.value}->{breaker.state.value} fault=none"
+        report.events.append(
+            ScenarioEvent(
+                step=step,
+                operation="network_call",
+                outcome=outcome,
+                detail=detail,
+                latency_ms=0.0,
+            )
+        )
+        clock.advance(request_interval_ms / 1000)
+
+    snapshot = injector.snapshot()
+    if snapshot.calls != report.successes + report.failures:
+        raise AssertionError("network fault accounting mismatch")
     return report
 
 
@@ -334,6 +414,7 @@ def worker_pool_scenario(**kwargs: int) -> ScenarioReport:
 def full_suite() -> dict[str, object]:
     reports = [
         circuit_breaker_scenario(),
+        network_partition_scenario(),
         retry_dlq_scenario(),
         resilient_executor_scenario(),
         worker_pool_scenario(),
@@ -349,6 +430,7 @@ __all__ = [
     "circuit_breaker_scenario",
     "compare_reports",
     "full_suite",
+    "network_partition_scenario",
     "resilient_executor_scenario",
     "retry_dlq_scenario",
     "worker_pool_scenario",

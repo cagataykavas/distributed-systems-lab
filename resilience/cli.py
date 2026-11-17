@@ -7,6 +7,7 @@ from pathlib import Path
 from resilience.reporting import compare_reports
 from resilience.scenarios import (
     circuit_breaker_scenario,
+    network_partition_scenario,
     resilient_executor_scenario,
     retry_dlq_scenario,
     worker_pool_scenario,
@@ -26,6 +27,19 @@ def command_circuit(args: argparse.Namespace) -> int:
         failure_probability=args.failure_probability,
         failure_threshold=args.failure_threshold,
         seed=args.seed,
+    )
+    _render(report.as_dict(), args.output)
+    return 0
+
+
+def command_network_partition(args: argparse.Namespace) -> int:
+    report = network_partition_scenario(
+        requests=args.partition_requests,
+        request_interval_ms=args.request_interval_ms,
+        partition_start_ms=args.partition_start_ms,
+        partition_duration_ms=args.partition_duration_ms,
+        failure_threshold=args.partition_failure_threshold,
+        recovery_timeout_ms=args.recovery_timeout_ms,
     )
     _render(report.as_dict(), args.output)
     return 0
@@ -64,6 +78,14 @@ def command_suite(args: argparse.Namespace) -> int:
             failure_threshold=args.failure_threshold,
             seed=args.seed,
         ),
+        network_partition_scenario(
+            requests=args.partition_requests,
+            request_interval_ms=args.request_interval_ms,
+            partition_start_ms=args.partition_start_ms,
+            partition_duration_ms=args.partition_duration_ms,
+            failure_threshold=args.partition_failure_threshold,
+            recovery_timeout_ms=args.recovery_timeout_ms,
+        ),
         retry_dlq_scenario(
             messages=args.messages,
             max_attempts=args.max_attempts,
@@ -84,6 +106,17 @@ def _add_output(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output", help="optional JSON output path")
 
 
+def _add_partition_arguments(
+    parser: argparse.ArgumentParser, *, request_flag: str = "--requests"
+) -> None:
+    parser.add_argument(request_flag, dest="partition_requests", type=int, default=12)
+    parser.add_argument("--request-interval-ms", type=int, default=100)
+    parser.add_argument("--partition-start-ms", type=int, default=300)
+    parser.add_argument("--partition-duration-ms", type=int, default=400)
+    parser.add_argument("--partition-failure-threshold", type=int, default=2)
+    parser.add_argument("--recovery-timeout-ms", type=int, default=250)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="resilience-lab",
@@ -98,6 +131,11 @@ def build_parser() -> argparse.ArgumentParser:
     circuit.add_argument("--seed", type=int, default=42)
     _add_output(circuit)
     circuit.set_defaults(handler=command_circuit)
+
+    partition = subparsers.add_parser("network-partition")
+    _add_partition_arguments(partition)
+    _add_output(partition)
+    partition.set_defaults(handler=command_network_partition)
 
     dlq = subparsers.add_parser("retry-dlq")
     dlq.add_argument("--messages", type=int, default=12)
@@ -128,6 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--items", type=int, default=20)
     suite.add_argument("--queue-size", type=int, default=3)
     suite.add_argument("--max-concurrency", type=int, default=2)
+    _add_partition_arguments(suite, request_flag="--partition-requests")
     _add_output(suite)
     suite.set_defaults(handler=command_suite)
     return parser
